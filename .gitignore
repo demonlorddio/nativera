@@ -1,0 +1,44 @@
+# --- Python -----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# --- C build artifacts (the native cores) -----------------------------------
+*.o
+*.a
+*.so
+*.obj
+build/
+bin/
+
+# --- RecompLauncher consumer runtime state (per title) ----------------------
+# <title>/.recomp/ holds the prepare stamp, the saves cache, and the native
+# build cache. It is generated at runtime, never committed.
+.recomp/
+
+# --- logs -------------------------------------------------------------------
+*.log
+
+# --- OS / editor ------------------------------------------------------------
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/
+.idea/
+
+# --- BYO-disc policy: we ship NO game files or discs ------------------------
+# Any local ROM / dump / extracted-disc tree stays on the user's SHARE drive
+# (/userdata), never in this repo.
+downloads/
+extracted/
+roms/
+*.iso
+*.gba
+*.gb
+*.bin
+*.nno
+*.cue
+*.mdf
