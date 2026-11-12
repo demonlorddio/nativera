@@ -12,7 +12,11 @@ void gb_runtime_free(gb_runtime_t *runtime) {
 }
 
 int gb_runtime_step(gb_runtime_t *runtime) {
-    return gb_cpu_step(&runtime->cpu, &runtime->mmu, gb_mmu_read, gb_mmu_write);
+    gb_context_t ctx = {
+        .cpu = &runtime->cpu,
+        .mmu = &runtime->mmu
+    };
+    return gb_cpu_step(&runtime->cpu, &ctx, gb_mmu_read, gb_mmu_write);
 }
 
 void gb_runtime_run_cycles(gb_runtime_t *runtime, uint64_t target_cycles) {
