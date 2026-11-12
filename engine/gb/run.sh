@@ -2,9 +2,17 @@
 # NativeRa Game Boy - Batocera Native Port Wrapper (run.sh)
 # Follows the Batocera / Ports native port contract.
 
-# 1. Capture system environment if available
-if [ -f /proc/1/environ ]; then
-    export $(cat /proc/1/environ | tr '\0' '\n' 2>/dev/null)
+# 1. Inherit ONLY an allowlisted set of variables from PID 1.
+#    Never import PID 1's full environment: it may carry credentials
+#    (API keys, tokens) and run.sh output is tee'd into the log (step 3).
+if [ -r /proc/1/environ ]; then
+    while IFS= read -r envline; do
+        case "$envline" in
+            PATH=*|HOME=*|TERM=*|LANG=*|LC_*=*|DISPLAY=*|XDG_*)
+                export "$envline"
+                ;;
+        esac
+    done < <(tr '\0' '\n' < /proc/1/environ 2>/dev/null)
 fi
 
 # 2. Set display and isolated home

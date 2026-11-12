@@ -1,0 +1,43 @@
+#!/bin/sh
+# NativeRa Prototype - Phase 1 minimal init
+# Reaches a text console to prove the boot chain
+# (Limine -> kernel -> initramfs -> busybox shell).
+
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
+export TERM=linux
+export HOME=/
+
+# --- pseudo filesystems ---
+mount -t proc     none /proc
+mount -t sysfs    none /sys
+mkdir -p /dev
+mount -t tmpfs    tmp  /dev
+# devtmpfs gives us /dev/console and any kernel-mkdev nodes
+mount -t devtmpfs none /dev 2>/dev/null || true
+
+# --- console sanity: make sure we have a terminal ---
+[ -e /dev/console ] || mknod -m 600 /dev/console c 5 1
+
+banner() {
+    clear 2>/dev/null || true
+    echo
+    echo "  ================================================="
+    echo "    NativeRa  -  Prototype Phase 1  (text console)"
+    echo "  ================================================="
+    echo "  Boot chain OK: Limine -> kernel -> initramfs -> sh"
+    echo
+    echo "  Kernel: $(uname -r)"
+    echo "  Uptime: $(cut -d' ' -f1 /proc/uptime 2>/dev/null)s"
+    echo "  Mem:    $(free -m 2>/dev/null | awk 'NR==2{print $2" MB total, "$7" MB avail"}')"
+    echo
+    echo "  Type 'ls /sys/firmware/efi' or 'dmesg | tail' to poke around."
+    echo "  Type 'reboot' or 'poweroff' to restart."
+    echo "  ================================================="
+    echo
+}
+
+banner
+
+# Drop into an interactive shell on the console.
+# PID 1 == sh, so when it exits the kernel halts (expected for a prototype).
+exec /bin/sh
