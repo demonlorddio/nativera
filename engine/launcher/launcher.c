@@ -29,7 +29,7 @@ void scan_roms(const char *base_dir) {
             const char *ext = strrchr(dir->d_name, '.');
             if (ext && (strcmp(ext, ".gb") == 0 || strcmp(ext, ".sh") == 0)) {
                 if (game_count < MAX_GAMES) {
-                    strncpy(games[game_count].name, dir->d_name, sizeof(games[game_count].name) - 1);
+                    snprintf(games[game_count].name, sizeof(games[game_count].name), "%s", dir->d_name);
                     snprintf(games[game_count].path, sizeof(games[game_count].path), "%s/%s", base_dir, dir->d_name);
                     game_count++;
                 }
