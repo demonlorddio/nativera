@@ -110,4 +110,4 @@ rm -f /run/media/dio/SHARE/system/configs/emulationstation/es_systems.cfg
 
 ## Next: Phase 1B (manifest-driven)
 
-Once Phase 1A works, replace the wrapper with a **manifest consumer** that reads `recomplauncher.json` and implements the full contract (prepare → config → start → saves). Then drop the **Asura's Wrath package** into `/userdata/roms/recomp/asuraswrath/` and confirm it boots natively.
+Once Phase 1A works, replace the wrapper with a **manifest consumer** that reads `recomplauncher.json` and implements the full contract (prepare → config → start → saves). Then drop a **native port title** (our flagship Game Boy / GBA port) into `/userdata/roms/recomp/` and confirm it boots natively. Keep **Asura's Wrath** as a consumer self-test fixture only — it's RPCS3-based (an emulator underneath), which violates our no-emulator content rule, so it is **not** shipped as nativera content.

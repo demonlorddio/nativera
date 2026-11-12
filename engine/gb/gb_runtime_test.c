@@ -20,6 +20,8 @@ int main(void) {
     /* Run 2 instructions: LD B, 0x12 (8 cycles) and NOP (4 cycles) */
     gb_runtime_run_cycles(&runtime, 12);
 
+    printf("cpu.b = 0x%02X, cpu.c = 0x%02X, cpu.bc = 0x%04X\n", runtime.cpu.b, runtime.cpu.c, runtime.cpu.bc);
+
     assert(runtime.cpu.b == 0x12);
     assert(runtime.cpu.pc == 0x103);
     assert(runtime.cpu.cycles == 12);

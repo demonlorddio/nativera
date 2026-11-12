@@ -5,7 +5,7 @@
 #include <stdbool.h>
 #include "gb_cpu.h"
 
-typedef struct {
+typedef struct gb_mmu_t {
     uint8_t *rom;         /* Full ROM image */
     uint32_t rom_size;
     uint8_t *sram;        /* Battery backed external RAM */

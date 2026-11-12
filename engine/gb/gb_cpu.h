@@ -45,7 +45,17 @@ typedef struct {
 typedef uint8_t (*gb_read_cb_t)(void *user, uint16_t addr);
 typedef void    (*gb_write_cb_t)(void *user, uint16_t addr, uint8_t val);
 
+/* Forward declaration */
+typedef struct gb_mmu_t gb_mmu_t;
+
+/* Execution context containing CPU and MMU for callbacks */
+typedef struct {
+    gb_cpu_t *cpu;
+    gb_mmu_t *mmu;
+} gb_context_t;
+
 void gb_cpu_init(gb_cpu_t *cpu);
 int  gb_cpu_step(gb_cpu_t *cpu, void *user, gb_read_cb_t read_mem, gb_write_cb_t write_mem);
+
 
 #endif /* NATIVERA_GB_CPU_H */

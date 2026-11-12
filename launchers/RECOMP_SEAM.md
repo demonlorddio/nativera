@@ -124,7 +124,12 @@ Add the manifest consumer to the wrapper:
 - Exec `start.program` with `start.args` + injected env.
 - Copy `saves[]` globs after the session.
 
-The wrapper becomes a **manifest consumer** that speaks the RecompLauncher contract. Once it works, **every upstream recomp drops in and just works** — no per-game code.
+The wrapper becomes a **manifest consumer** that speaks the RecompLauncher contract. Once it works, **every upstream manifest drops in and just works** — no per-game consumer code.
+
+**Content caveat:** the consumer is manifest-agnostic, but the *titles we ship
+are our own native ports* (no emulator underneath). Asura's Wrath (RPCS3-based)
+is only a consumer self-test fixture, not shipped nativera content — the first
+shipped native title is our flagship **Game Boy / GBA** port.
 
 ## Phase 2 — dedicated recomp system
 

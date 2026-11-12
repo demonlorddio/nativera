@@ -12,6 +12,15 @@ is *a native recompiled executable + the player's own assets + one
 upstream recomp drop-in. Our consumer is `engine/recomp-launcher.py`; this doc
 is the spec it implements.
 
+> **Content model (keep straight):** RecompLauncher is the *packaging /
+> distribution / launcher* standard we adopt. The **content** of a nativera
+> title is a **self-authored native port** — our own engine running the user's
+> BYO assets (e.g. the flagship Game Boy / Game Boy Advance core). We do **not**
+> ship titles that are an emulator underneath (no forks, no RPCS3 in the path).
+> The **Asura's Wrath** package (RPCS3-based) is kept **only as the consumer's
+> self-test fixture**: it proves `recomplauncher.json` + our consumer against a
+> real format-1 manifest. It is **not** a nativera title we ship.
+
 ---
 
 ## 1. The manifest (`recomplauncher.json`, `format: 1`)
