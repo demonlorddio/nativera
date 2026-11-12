@@ -1,0 +1,22 @@
+{
+  "$schema": "https://recomplauncher.com/schema.json",
+  "format": 1,
+  "repo": "demonlorddio/nativera",
+  "name": "NativeRa Game Boy",
+  "game": {
+    "kind": "file",
+    "label": "Your Game Boy ROMs (.gb)",
+    "check": "file"
+  },
+  "start": {
+    "program": ["engine/gb/run.sh"],
+    "args": ["{game}"]
+  },
+  "saves": [
+    "*.sav",
+    "**/*.sav"
+  ],
+  "exit_codes": {
+    "1": "Engine failed to initialize or ROM not found."
+  }
+}
