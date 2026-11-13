@@ -1,0 +1,25 @@
+# The nativera RecompLauncher manifest consumer (Rust port of the on-target
+# Python runner, kept as reference until this one is proven in-tree).
+#
+# Step 1 of the user-decided migration order consumer -> front-end -> core.
+# The lib is contract-testable headless; the bin is the on-target CLI.
+[package]
+name = "recomp_launcher"
+version = "0.3.0"
+edition = "2021"
+description = "nativera RecompLauncher v1 manifest consumer"
+
+[lib]
+name = "recomp_launcher"
+path = "src/lib.rs"
+
+[[bin]]
+name = "recomp-launcher"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+ini = "1"
+glob = "0.3"

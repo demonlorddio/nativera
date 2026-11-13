@@ -21,10 +21,17 @@ engine/gb/gb_runtime_test
 engine/gb/gb_ppu_test
 engine/launcher/nativera-launcher
 
+# --- Rust consumer build output (cargo) ------------------------------------
+# `cargo` fills engine/target/ on every build; never commit it.
+engine/target/
+
 # --- RecompLauncher consumer runtime state (per title) ----------------------
 # <title>/.recomp/ holds the prepare stamp, the saves cache, and the native
 # build cache. It is generated at runtime, never committed.
 .recomp/
+# Per-title runtime homes/logs the consumer tees (e.g. the gb self-test).
+engine/gb/.home/
+engine/gb/logs/
 
 # --- logs -------------------------------------------------------------------
 *.log

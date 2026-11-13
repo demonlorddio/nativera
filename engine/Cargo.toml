@@ -1,0 +1,14 @@
+# nativera Rust workspace.
+#
+# Member crates are migrated off the C/Python stack in the user-decided order
+# consumer -> front-end -> core. Only `consumer` exists yet; the others are
+# added as each migration lands. The shared `target/` sits here (git-ignored).
+[workspace]
+resolver = "2"
+members = ["consumer"]
+
+[profile.release]
+# The consumer ships in-tree on the bootable distro; keep it small.
+strip = "symbols"
+lto = "thin"
+codegen-units = 1
