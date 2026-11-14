@@ -204,6 +204,13 @@ The recomp model maps onto our own native ports: **`prepare`** = JIT/AOT-compile
 the ROM's code regions into a native cache; **`start`** = run the cache;
 **`saves`** = SRAM/flash. The GB/GBA ROM battery (1,958 `.gb` + 283 `.gba`
 under `SHARE/roms/`) is the regression set for that flagship port. The
-flagship scaffold `engine/gb/gbcore.c` is a **broken draft** (misremembered
-opcode table + struct/IO-map/const bugs) and must be rebuilt from a verified
-opcode table before use — do not trust it or the garbled web-sourced table.
+**Correction (2026-11-15):** there is no `engine/gb/gbcore.c`. The real core is
+`engine/gb/gb_cpu.c` (1,254 lines), and it is **not** a broken draft — its KATs
+pass under `make tests`. The earlier "broken scaffold" warning was stale and is
+withdrawn.
+
+What *is* true, and matters more: `gb_cpu.c` is a **252-case `switch (opcode)`
+interpreter**. That is an emulator, not a recompiler. It is kept as a
+**correctness oracle and placeholder** for the boot→menu→launch→save chain, and
+must never be presented as a nativera native title. A real GB recompiler does
+not exist yet.

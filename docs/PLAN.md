@@ -29,7 +29,7 @@ Implication: nativera inherits Batocera's 3-tier model:
 | # | Decision | Chosen | Why |
 |---|----------|--------|-----|
 | D1 | Chassis | **Derive from Batocera** (keep boot+root model+ES), don't build a new OS | You want "light enough to boot everywhere" — Batocera already solves that. Cheapest path. |
-| D2 | Front-end | **Reuse EmulationStation**; add native capability in two stages: (a) stock `program` system first, (b) fork/patch a "recomp" provider later | Stock program system = zero patching for MVP; patch only when we need manifest-grade depth. |
+| D2 | Front-end | **Reuse EmulationStation — LOCKED 2026-11-15.** ES is the home screen; we re-theme it (better typography, console-grouped layout, cleaner art) rather than replace it. Two stages: (a) stock `program`/`sh` seam first, (b) a `recomp` provider only when manifest features block us. | Owner's call: ES is a good home screen and Batocera users already know it. Rebuilding it wastes the scarcest resource. **The Rust `engine/frontend/` is demoted to a launch-contract reference/proof harness, not the shipping home screen.** See `context.md` §2. |
 | D3 | Native-title mechanism | **Phase 1: ES `program` launcher. Phase 2: a dedicated `recomp` system fed by `recomplauncher.json`** | Graduated; each stage is independently shippable. |
 | D4 | Catalogue model | **BYO-disc on `/userdata/recomp/<title>/`** + RecompStore-installable zips (both, manifest is the shared spine) | Matches your Asura package model + the upstream "bring your own disc" ethos. |
 | D5 | Console coverage | **No emulator forks — author our own native ports** (or adopt a proven community recomp). Gaps are *not* listed, not filled with an emu core. | Stronger native-first stance: every listed title is native. ⚠ confirmed |
