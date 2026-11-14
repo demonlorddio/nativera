@@ -1,5 +1,6 @@
+#include "launch.h"
+
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <dirent.h>
 #include <unistd.h>
@@ -108,9 +109,8 @@ int main(int argc, char **argv) {
                     case SDLK_RETURN:
                     case SDLK_SPACE:
                         if (game_count > 0 && strlen(games[selected_index].path) > 0) {
-                            char cmd[1024];
-                            snprintf(cmd, sizeof(cmd), "./run.sh \"%s\"", games[selected_index].path);
-                            system(cmd);
+                            int status = 0;
+                            nativera_launch_game("./run.sh", games[selected_index].path, &status);
                         }
                         break;
                     case SDLK_ESCAPE:

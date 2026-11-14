@@ -20,6 +20,7 @@ engine/gb/gb_mmu_test
 engine/gb/gb_runtime_test
 engine/gb/gb_ppu_test
 engine/launcher/nativera-launcher
+engine/launcher/launch_test
 
 # --- Rust consumer build output (cargo) ------------------------------------
 # `cargo` fills engine/target/ on every build; never commit it.
