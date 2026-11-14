@@ -1,0 +1,15 @@
+[package]
+name = "nativera_frontend"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "nativera_frontend"
+
+[[bin]]
+name = "nativera-fe"
+path = "src/main.rs"
+
+[dependencies]
+# System SDL2 + SDL2_ttf via pkg-config; `ttf` pulls in the typed sdl2::ttf module.
+sdl2 = { version = "0.38", features = ["use-pkgconfig", "ttf"] }
