@@ -103,20 +103,28 @@ Type is **W95 FAT32 (LBA)**, not **EFI System (EF00)**. Firmware only creates a
 a generic "USB HDD" entry, which most firmware will not boot. This is exactly the P0 root cause
 already written down in the skill's Skill 1 — it was never applied.
 
-**Fix:** GPT + ESP type EF00. `gdisk`/`sgdisk` are not installed on this machine; use `parted`
-(needs root): `mklabel gpt` → `mkpart esp fat32 1MiB 100%` → `set 1 esp on`. Then re-deploy
-the files and verify with `parted -s /dev/sda print`.
+**Verified 2026-11-15:** everything *else* on the stick is correct and would boot.
+- `EFI/BOOT/BOOTX64.EFI` md5 `a53618af…` — byte-identical to the system's Limine 12.9.6.
+- `limine.conf` syntax checked against `/usr/share/doc/limine/CONFIG.md`: `protocol: linux`,
+  `kernel_path`, `module_path`, `cmdline` are all valid v12 options.
+- `vmlinuz` is a valid bzImage: `protocol 2.15`, 64-bit EFI handoff entry point, ZST-compressed.
+- `initramfs.cpio.gz` is valid newc+gzip; a fresh repack from `flashdrive/build/rootfs`
+  produces 69 entries / 1.66 MB and lists cleanly.
 
-**BLOCKER 2 — the bundled kernel is gone from the host.**
-`build.sh` hardcodes `KERNEL_VERSION=6.18.55-2-cachyos-lts` and reads
-`/usr/lib/modules/$KERNEL_VERSION/vmlinuz`. **That path does not exist on this machine now** —
-the host kernel has moved on. `build.sh` fails at its own sanity check today. The `vmlinuz` on
-the stick is a stale artifact from Nov 12.
-**Fix:** point `KERNEL_VERSION` at a kernel actually installed, or make the script auto-detect
-the newest `/usr/lib/modules/*/vmlinuz`.
+So the partition table is the **only** thing standing between the project and a booting console.
 
-**Minor:** `limine.conf` has no `default_entry`. Harmless with one entry and a 3s timeout;
-a latent bug the moment a second entry is added.
+**Fix:** `flashdrive/fix-partition.sh` (added 2026-11-15). GPT + ESP type EF00, FAT32, remount.
+Refuses any non-USB device and requires the device path typed back as confirmation.
+`sgdisk`/`gdisk` are not installed; the script uses `parted` (present). Needs root.
+
+**BLOCKER 2 — the bundled kernel was gone from the host. FIXED 2026-11-15.**
+`build.sh` used to hardcode `KERNEL_VERSION=6.18.55-2-cachyos-lts`, which no longer exists on
+this machine (the host is now `6.18.60-2-cachyos-lts`, plus `7.3.3-1-cachyos`). It now
+auto-detects: newest `*-lts` module dir with a `vmlinuz`, else newest module dir. Verified to
+resolve `6.18.60-2-cachyos-lts`. All other build inputs confirmed present: busybox,
+`BOOTX64.EFI`, `ld-linux-x86-64.so.2`, `libc.so.6`, `libcrypt.so.2`.
+
+**Minor — FIXED 2026-11-15:** `limine.conf` now sets `default_entry: 1`.
 
 ### 3.2 Catalogue / manifest layer — **working**
 
@@ -219,8 +227,10 @@ Per D8: these are verified (tests pass), so they are **pushable**.
 1. **Delete the hallucinated artifacts.** The old `context.md` is already replaced by this file.
    Do not resurrect session summaries as project docs.
 2. **Fix the partition table to GPT/EF00** and re-deploy. This is the single thing standing
-   between the project and a booting console. Needs root.
+   between the project and a booting console. **Script ready:** `flashdrive/fix-partition.sh`
+   (needs root; refuses non-USB devices). Then `./flashdrive/build.sh /run/media/dio/NATIVERA`.
 3. **Fix `build.sh` kernel detection** so it cannot silently bundle a kernel that is not there.
+   **DONE 2026-11-15** — now auto-detects the newest `*-lts` module dir.
 4. **Push the 6 commits** (D8: verified → pushable).
 5. **Correct the stale docs:** `LAUNCHER.md` `gbcore.c` reference; `PLAN.md` D2 row to match
    the ES decision; the skill's plugin table (it routes to 12 plugins, **none installed**) and

@@ -25,9 +25,21 @@ SRC="$REPO/flashdrive"
 OUT="$REPO/flashdrive/build"
 
 # --- inputs (override via environment) --------------------------------------
-# NOTE: the host kernel is NOT what we boot; we bundle the LTS kernel.
-KERNEL_VERSION="${KERNEL_VERSION:-6.18.55-2-cachyos-lts}"
+# NOTE: the host kernel is NOT what we boot; we bundle a kernel from /usr/lib/modules.
+# Auto-detect so a host kernel update can never silently break the build:
+# prefer the newest *-lts module dir, else the newest module dir that has a vmlinuz.
+if [ -z "${KERNEL_VERSION:-}" ]; then
+    KERNEL_VERSION="$(for d in /usr/lib/modules/*-lts; do
+                          [ -f "$d/vmlinuz" ] && basename "$d"
+                      done | sort -V | tail -1)"
+fi
+if [ -z "${KERNEL_VERSION:-}" ]; then
+    KERNEL_VERSION="$(for d in /usr/lib/modules/*; do
+                          [ -f "$d/vmlinuz" ] && basename "$d"
+                      done | sort -V | tail -1)"
+fi
 KMOD="/usr/lib/modules/$KERNEL_VERSION"
+echo "==> kernel: ${KERNEL_VERSION:-<none found>}"
 BUSYBOX="${BUSYBOX:-/usr/lib/initcpio/busybox}"
 LIMINE_EFI="${LIMINE_EFI:-/usr/share/limine/BOOTX64.EFI}"
 DRIVE="${1:-/run/media/$(id -un)/BA88-0A7A}"
