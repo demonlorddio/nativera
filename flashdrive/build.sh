@@ -69,11 +69,14 @@ ln -s usr/lib   "$ROOT/lib"
 ln -s usr/lib64 "$ROOT/lib64"
 
 # applet symlinks
+# NOTE: keep this list in sync with what rootfs/init actually calls. A missing
+# applet fails at runtime with "not found", not at build time.
 cd "$ROOT/bin"
 for a in sh mount umount ls cat echo sleep mkdir modprobe insmod delmod lsmod \
          ip ifconfig reboot poweroff halt grep cp rm ln touch dmesg head tail \
          more tr cut find wc date env chmod chown mknod free clear kill ps \
-         pwd mv rmdir uname; do
+         pwd mv rmdir uname awk sed sort uniq xargs basename dirname printf \
+         test true false tee sync; do
     ln -sf busybox "$a"
 done
 cd "$ROOT/sbin"
@@ -97,6 +100,18 @@ cp "$KMOD/vmlinuz" "$DRIVE/vmlinuz"
 cp "$OUT/initramfs.cpio.gz" "$DRIVE/initramfs.cpio.gz"
 cp "$SRC/limine.conf" "$DRIVE/limine.conf"
 cp "$SRC/limine.conf" "$DRIVE/EFI/BOOT/limine.conf"
+
+# --- 4. verify the deploy actually landed -------------------------------------
+# A silent partial deploy is the worst failure mode: the stick looks fine and
+# just does not boot. Fail loudly here instead.
+echo "==> verifying deploy"
+for f in EFI/BOOT/BOOTX64.EFI EFI/BOOT/limine.conf limine.conf vmlinuz initramfs.cpio.gz; do
+    if [ ! -s "$DRIVE/$f" ]; then
+        echo "DEPLOY FAILED: $DRIVE/$f missing or empty" >&2
+        exit 1
+    fi
+    printf '    %-26s %10s bytes\n' "$f" "$(stat -c %s "$DRIVE/$f")"
+done
 
 sync
 echo "==> deployed to $DRIVE"
