@@ -57,3 +57,7 @@ roms/
 *.nno
 *.cue
 *.mdf
+
+# SSH key baked into the stick as /root/.ssh/authorized_keys
+# Put YOUR public key here, then rebuild with NET=1.
+authorized_keys.pub

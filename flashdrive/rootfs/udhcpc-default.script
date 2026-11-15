@@ -1,0 +1,61 @@
+#!/bin/sh
+# udhcpc event script for NativeRa.
+#
+# udhcpc does NOT configure the interface itself: it obtains a lease and then
+# runs this script with the lease in the environment. Without it, udhcpc exits
+# successfully having applied nothing, and `ip addr` shows no address. That is
+# exactly the "ip: none" failure seen on the first networked boot.
+#
+# Busybox's stock script is not shipped in this initramfs, so this is a minimal
+# equivalent: apply the address, route and resolv.conf on bound/renew, undo on
+# deconfig/leasefail.
+
+case "$1" in
+    deconfig)
+        ip addr flush dev "$interface" 2>/dev/null
+        ip link set "$interface" up 2>/dev/null
+        ;;
+
+    bound|renew)
+        ip addr flush dev "$interface" 2>/dev/null
+        ip addr add "$ip/${mask:-24}" broadcast "${broadcast:-+}" dev "$interface"
+        ip link set "$interface" up
+
+        # Default route. udhcpc sets $router to a space-separated list.
+        if [ -n "$router" ]; then
+            for r in $router; do
+                ip route add default via "$r" dev "$interface" 2>/dev/null && break
+            done
+        fi
+
+        # DNS
+        if [ -n "$dns" ]; then
+            : > /etc/resolv.conf
+            for d in $dns; do
+                echo "nameserver $d" >> /etc/resolv.conf
+            done
+        fi
+
+        # Record the lease so init can print the address and start dropbear.
+        {
+            echo "interface=$interface"
+            echo "ip=$ip"
+            echo "mask=${mask:-24}"
+            echo "router=$router"
+            echo "dns=$dns"
+            echo "serverid=$serverid"
+        } > /run/udhcpc.lease
+
+        echo "  dhcp: $ip/${mask:-24} via ${router:-?} dns ${dns:-?}"
+        ;;
+
+    leasefail)
+        echo "  dhcp: lease failed on $interface"
+        ;;
+
+    nak)
+        echo "  dhcp: server rejected the request on $interface"
+        ;;
+esac
+
+exit 0

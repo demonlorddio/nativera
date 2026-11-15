@@ -87,6 +87,71 @@ echo "  tty devices:  $(ls /dev/tty* 2>/dev/null | tr '\n' ' ')"
 echo "  -------------------"
 echo
 
+# --- networking (only present when built with NET=1) --------------------------
+# The kernel ships every ethernet driver as a module, so nothing works until the
+# right one is loaded. Try the common ones in order of likelihood; the first that
+# creates an interface wins. Then DHCP, then dropbear.
+if [ -x /usr/sbin/dropbear ]; then
+    echo "  --- network ---"
+
+    # Load NIC modules. modprobe needs modules.dep, which build.sh generates.
+    for m in e1000e e1000 igb igc r8169; do
+        modprobe "$m" 2>/dev/null && echo "  loaded: $m"
+    done
+
+    # Find an interface that is not loopback.
+    IFACE=""
+    for i in $(ls /sys/class/net 2>/dev/null); do
+        [ "$i" = "lo" ] && continue
+        IFACE="$i"
+        break
+    done
+
+    if [ -z "$IFACE" ]; then
+        echo "  no network interface found (no matching NIC driver)"
+    else
+        echo "  interface: $IFACE"
+        ip link set "$IFACE" up 2>/dev/null
+        # udhcpc obtains a lease and hands it to an event script, which is what
+        # actually configures the address/route/resolv.conf. Without -s pointing
+        # at a real script it exits 0 having applied nothing.
+        # -q: quit after obtaining a lease. -n: exit if none obtained.
+        if udhcpc -i "$IFACE" -s /usr/share/udhcpc/default.script -q -n -t 5 -T 3 >/dev/null 2>&1; then
+            IP="$(ip -4 addr show "$IFACE" 2>/dev/null | awk '/inet /{print $2; exit}')"
+            echo "  ip: ${IP:-none}"
+            if [ -n "$IP" ]; then
+                # Root has no password by default, so only key auth can work.
+                # Generate a key on the stick if none was baked in.
+                mkdir -p /root/.ssh
+                chmod 700 /root/.ssh
+                if [ ! -f /root/.ssh/authorized_keys ]; then
+                    echo "  NOTE: no /root/.ssh/authorized_keys - ssh will refuse logins"
+                    echo "        add your pubkey to the ESP as authorized_keys"
+                fi
+                echo "  starting dropbear on port 22 (key auth only)"
+                # -s: disable PASSWORD logins (key auth still works).
+                # NOT -w: in dropbear, -w means "Disallow root logins", which
+                # rejects root outright and produces exactly the symptom seen
+                # here - "root login rejected", "0 fails", key never checked.
+                # -E: log to stderr so auth failures are visible.
+                # Do not pipe dropbear into `head`: head exits, the pipe closes,
+                # and dropbear takes SIGPIPE mid-authentication. Use a file.
+                /usr/sbin/dropbear -R -s -E -p 22 2>/run/dropbear.log
+                sleep 1
+                if [ -s /run/dropbear.log ]; then
+                    echo "  dropbear:"
+                    head -5 /run/dropbear.log | sed 's/^/    /'
+                fi
+                echo "  ssh root@${IP%/*}"
+            fi
+        else
+            echo "  dhcp failed on $IFACE"
+        fi
+    fi
+    echo "  -------------------"
+    echo
+fi
+
 # Drop into an interactive shell on the console.
 #
 # PID 1 is already a session leader with NO controlling tty, so `exec cttyhack

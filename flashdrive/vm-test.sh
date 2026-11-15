@@ -93,7 +93,12 @@ VBoxManage modifyvm "$VM" \
     --boot1 disk --boot2 none --boot3 none --boot4 none \
     --graphicscontroller vmsvga \
     $UART_ARGS \
-    --audio none --usb off --nic1 none >/dev/null
+    --audio none --usb off --nic1 "${NIC_MODE:-none}" >/dev/null
+
+# Optional host->guest port forward so ssh can be tested from this machine.
+if [ -n "${SSH_FORWARD:-}" ]; then
+    VBoxManage modifyvm "$VM" --natpf1 "ssh,tcp,,${SSH_FORWARD},,22" >/dev/null 2>&1 || true
+fi
 
 VBoxManage storagectl "$VM" --name SATA --add sata --controller IntelAhci >/dev/null
 VBoxManage storageattach "$VM" --storagectl SATA --port 0 --device 0 \
