@@ -40,6 +40,18 @@ if [ -z "${KERNEL_VERSION:-}" ]; then
 fi
 KMOD="/usr/lib/modules/$KERNEL_VERSION"
 echo "==> kernel: ${KERNEL_VERSION:-<none found>}"
+
+# BUSYBOX: do NOT default to /usr/lib/initcpio/busybox. That binary is a
+# stripped mkinitcpio build with only 147 applets and NO mount, date, tr or
+# find. Using it makes every mount in rootfs/init fail with
+# "mount: applet not found", which silently leaves the shell with no /proc and
+# no controlling tty. Prefer a full static busybox; verify the applets we need.
+if [ -z "${BUSYBOX:-}" ]; then
+    for cand in "$SRC/vendor/busybox-static" /tmp/busybox-static \
+                /usr/local/bin/busybox-static /usr/bin/busybox /bin/busybox; do
+        [ -x "$cand" ] && BUSYBOX="$cand" && break
+    done
+fi
 BUSYBOX="${BUSYBOX:-/usr/lib/initcpio/busybox}"
 LIMINE_EFI="${LIMINE_EFI:-/usr/share/limine/BOOTX64.EFI}"
 DRIVE="${1:-/run/media/$(id -un)/BA88-0A7A}"
@@ -51,6 +63,26 @@ DRIVE="${1:-/run/media/$(id -un)/BA88-0A7A}"
 [ -d "$DRIVE" ] && [ -w "$DRIVE" ] ||
     { echo "drive not mounted/writable: $DRIVE (is it plugged in & mounted?)" >&2; exit 1; }
 
+# Fail at BUILD time, not boot time, if the busybox cannot do what init needs.
+# NOTE: capture the applet list ONCE into a variable. Piping `busybox --list`
+# into `grep -q` makes grep exit on first match, busybox take SIGPIPE, and
+# `set -o pipefail` then report a false failure for applets near the top of
+# the list. That bug previously rejected a perfectly good 392-applet busybox.
+echo "==> busybox: $BUSYBOX"
+APPLETS="$("$BUSYBOX" --list 2>/dev/null)"
+MISSING=""
+for a in sh mount umount mknod mkdir cat echo ls cp rm ln sleep dmesg head tail \
+         cut wc date env chmod chown free clear kill ps pwd mv rmdir uname awk \
+         sed sort tr find printf test true false tee sync cttyhack; do
+    printf '%s\n' "$APPLETS" | grep -qx -- "$a" || MISSING="$MISSING $a"
+done
+if [ -n "$MISSING" ]; then
+    echo "BUSYBOX IS INCOMPLETE - missing applets:$MISSING" >&2
+    echo "Point BUSYBOX= at a full static busybox (e.g. busybox.net 1.35.0 musl)." >&2
+    exit 1
+fi
+echo "==> busybox applets: all required present"
+
 echo "==> build dir: $OUT"
 rm -rf "$OUT"; mkdir -p "$OUT"
 
@@ -58,7 +90,11 @@ rm -rf "$OUT"; mkdir -p "$OUT"
 ROOT="$OUT/rootfs"
 mkdir -p "$ROOT"/bin "$ROOT"/sbin "$ROOT"/etc "$ROOT"/root "$ROOT"/home \
          "$ROOT"/tmp "$ROOT"/var "$ROOT"/usr/bin "$ROOT"/usr/sbin \
-         "$ROOT"/usr/lib "$ROOT"/usr/lib64
+         "$ROOT"/usr/lib "$ROOT"/usr/lib64 \
+         "$ROOT"/proc "$ROOT"/sys "$ROOT"/dev "$ROOT"/run
+# /proc /sys /dev /run MUST exist as mountpoints before init runs. Without them
+# every mount in rootfs/init fails silently and the shell comes up with no
+# /proc (empty uptime/mem) and no controlling tty.
 
 # busybox + the three glibc pieces its dynamic loader needs
 cp "$BUSYBOX"                        "$ROOT/bin/busybox"
@@ -76,7 +112,7 @@ for a in sh mount umount ls cat echo sleep mkdir modprobe insmod delmod lsmod \
          ip ifconfig reboot poweroff halt grep cp rm ln touch dmesg head tail \
          more tr cut find wc date env chmod chown mknod free clear kill ps \
          pwd mv rmdir uname awk sed sort uniq xargs basename dirname printf \
-         test true false tee sync; do
+         test true false tee sync cttyhack; do
     ln -sf busybox "$a"
 done
 cd "$ROOT/sbin"

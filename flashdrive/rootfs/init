@@ -8,18 +8,32 @@ export TERM=linux
 export HOME=/
 
 # --- pseudo filesystems ---
-mount -t proc     none /proc
-mount -t sysfs    none /sys
-mkdir -p /dev
-mount -t tmpfs    tmp  /dev
-# devtmpfs gives us /dev/console and any kernel-mkdev nodes
-mount -t devtmpfs none /dev 2>/dev/null || true
+# The mountpoints must already exist in the cpio (build.sh creates them).
+# A failed mount here is fatal to the rest of this script: no /proc means no
+# uptime/mem, no /dev means no controlling tty. Report instead of continuing.
+mkdir -p /proc /sys /dev /run
+
+if ! mount -t proc none /proc; then
+    echo "FATAL: could not mount /proc" >&2
+fi
+if ! mount -t sysfs none /sys; then
+    echo "WARNING: could not mount /sys" >&2
+fi
+
+# devtmpfs first: it provides /dev/console and kernel-created nodes.
+if ! mount -t devtmpfs none /dev 2>/dev/null; then
+    echo "WARNING: devtmpfs unavailable, falling back to tmpfs" >&2
+    mount -t tmpfs tmp /dev
+fi
 
 # --- console sanity: make sure we have a terminal ---
 [ -e /dev/console ] || mknod -m 600 /dev/console c 5 1
+[ -e /dev/null ]    || mknod -m 666 /dev/null    c 1 3
+[ -e /dev/tty ]     || mknod -m 666 /dev/tty     c 5 0
 
 banner() {
-    clear 2>/dev/null || true
+    # NOTE: no 'clear' during bring-up. It wipes any error output printed before
+    # the banner, which is exactly the information needed to debug a bad boot.
     echo
     echo "  ================================================="
     echo "    NativeRa  -  Prototype Phase 1  (text console)"
@@ -38,6 +52,40 @@ banner() {
 
 banner
 
+# --- bring-up diagnostics ----------------------------------------------------
+# Printed AFTER the banner so nothing can erase them. Remove once the chain is
+# proven and the boot is quiet.
+echo "  --- mount check ---"
+for m in /proc /sys /dev; do
+    if grep -q " $m " /proc/mounts 2>/dev/null; then
+        echo "  $m: mounted"
+    else
+        echo "  $m: NOT MOUNTED"
+    fi
+done
+echo "  /proc/uptime: $(cat /proc/uptime 2>/dev/null || echo unreadable)"
+echo "  /dev entries: $(ls /dev 2>/dev/null | wc -l)"
+echo "  tty devices:  $(ls /dev/tty* 2>/dev/null | tr '\n' ' ')"
+echo "  -------------------"
+echo
+
 # Drop into an interactive shell on the console.
-# PID 1 == sh, so when it exits the kernel halts (expected for a prototype).
-exec /bin/sh
+#
+# PID 1 is already a session leader with NO controlling tty, so `exec cttyhack
+# /bin/sh` cannot work: cttyhack's setsid() fails with EPERM and you get
+# "can't access tty; job control turned off" (no Ctrl-C, no fg/bg).
+#
+# The pattern busybox documents for exactly this case ("Starting interactive
+# shell from boot shell script") is `setsid cttyhack sh`: setsid detaches into a
+# fresh session, then cttyhack acquires the console as that session's
+# controlling terminal. Verified in a VM.
+echo "  Starting shell..."
+echo
+
+setsid cttyhack /bin/sh
+
+# Shell exited: shut down cleanly instead of panicking the kernel.
+echo
+echo "  Shell exited. Powering off."
+sync
+exec poweroff -f
