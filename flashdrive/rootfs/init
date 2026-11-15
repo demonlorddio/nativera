@@ -31,6 +31,24 @@ fi
 [ -e /dev/null ]    || mknod -m 666 /dev/null    c 1 3
 [ -e /dev/tty ]     || mknod -m 666 /dev/tty     c 5 0
 
+# --- console fallback --------------------------------------------------------
+# /dev/console follows the LAST console= on the kernel cmdline. If that points
+# at a serial port with nothing attached, everything init prints vanishes and
+# the machine looks dead (black screen) even though it booted fine. Note that a
+# serial port with nothing plugged in is still a valid tty, so `[ -t 1 ]` cannot
+# detect this: the cmdline has to be parsed.
+# This is a safety net, not the fix: limine.conf must still end with console=tty0.
+LAST_CONSOLE="$(tr ' ' '\n' < /proc/cmdline 2>/dev/null | grep '^console=' | tail -1)"
+case "$LAST_CONSOLE" in
+    console=ttyS*|console=ttyUSB*)
+        if [ -c /dev/tty0 ]; then
+            echo "WARNING: /dev/console is $LAST_CONSOLE (no serial attached)." >&2
+            echo "         Falling back to /dev/tty0 so output is visible." >&2
+            exec >/dev/tty0 2>&1 </dev/tty0
+        fi
+        ;;
+esac
+
 banner() {
     # NOTE: no 'clear' during bring-up. It wipes any error output printed before
     # the banner, which is exactly the information needed to debug a bad boot.
