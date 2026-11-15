@@ -248,7 +248,7 @@ if [ "${NET:-0}" = "1" ]; then
     done
     cd "$OLDPWD"
 
-    echo "    modules: $(find "$MODROOT" -name '*.ko.zst' | wc -l)"
+    echo "    modules: $(find "$MODROOT" -name '*.ko' | wc -l) (.ko, decompressed)"
 fi
 
 # --- 2. package: newc cpio + gzip, root-owned, symlinks preserved -----------
