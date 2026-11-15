@@ -137,10 +137,20 @@ if [ "${NET:-0}" = "1" ]; then
     mkdir -p "$MODROOT"
 
     # Copy a module and everything modules.dep says it needs.
+    # A missing module is a HARD ERROR, not a skip. Silently skipping is how a
+    # wrong path (drivers/net/phy/realtek.ko.zst instead of
+    # drivers/net/phy/realtek/realtek.ko.zst) shipped an image with no PHY
+    # driver, which produced an all-zero MAC at boot and no DHCP.
+    MOD_FAIL=0
     copy_mod() {
         local rel="$1"
         local src="/usr/lib/modules/$KVER/$rel"
-        [ -f "$src" ] || { echo "    skip (absent): $rel" >&2; return 0; }
+        if [ ! -f "$src" ]; then
+            echo "    MISSING MODULE: $rel" >&2
+            echo "      no such file: $src" >&2
+            MOD_FAIL=1
+            return 0
+        fi
         mkdir -p "$MODROOT/$(dirname "$rel")"
         # Decompress .ko.zst -> .ko. The kernel supports compressed modules
         # (CONFIG_MODULE_DECOMPRESS=y) but busybox insmod/modprobe does NOT pass
@@ -173,11 +183,29 @@ if [ "${NET:-0}" = "1" ]; then
              kernel/drivers/net/ethernet/intel/igb/igb.ko.zst \
              kernel/drivers/net/ethernet/intel/igc/igc.ko.zst \
              kernel/drivers/net/ethernet/realtek/r8169.ko.zst \
-             kernel/drivers/net/phy/realtek.ko.zst \
+             kernel/drivers/net/phy/realtek/realtek.ko.zst \
              kernel/drivers/net/phy/mdio_devres.ko.zst \
              kernel/drivers/net/mii.ko.zst; do
         copy_mod "$m"
     done
+
+    # PHY drivers are attached at RUNTIME by PHY ID, not via modules.dep, so
+    # they never show up as a dependency of the MAC driver. r8169's own deps
+    # list only mdio/libphy/mdio-bus - the Realtek PHY is found by probing the
+    # MDIO bus. Without it the link never comes up and the MAC reads as
+    # 00:00:00:00:00:00. Ship the common ones explicitly.
+    for p in kernel/drivers/net/phy/realtek/realtek.ko.zst \
+             kernel/drivers/net/phy/micrel.ko.zst \
+             kernel/drivers/net/phy/broadcom.ko.zst \
+             kernel/drivers/net/phy/marvell.ko.zst \
+             kernel/drivers/net/phy/bcm-phy-lib.ko.zst; do
+        [ -f "/usr/lib/modules/$KVER/$p" ] && copy_mod "$p"
+    done
+
+    if [ "$MOD_FAIL" -ne 0 ]; then
+        echo "NETWORKING BUILD FAILED: required module(s) missing (see above)" >&2
+        exit 1
+    fi
 
     # modules.dep for the subset we shipped, so modprobe resolves dependencies.
     if command -v depmod >/dev/null 2>&1; then

@@ -95,6 +95,15 @@ if [ -x /usr/sbin/dropbear ]; then
     echo "  --- network ---"
 
     # Load NIC modules. modprobe needs modules.dep, which build.sh generates.
+    # PHY drivers FIRST. A MAC driver probes the MDIO bus for a PHY by ID at
+    # attach time; if no PHY driver is registered yet the link never comes up
+    # and the interface reads as 00:00:00:00:00:00 with no carrier. They are not
+    # modules.dep dependencies of the MAC driver, so modprobe will not pull them
+    # in on its own - they have to be loaded explicitly, before the MAC.
+    for p in realtek micrel broadcom marvell; do
+        modprobe "$p" 2>/dev/null && echo "  loaded phy: $p"
+    done
+
     for m in e1000e e1000 igb igc r8169; do
         modprobe "$m" 2>/dev/null && echo "  loaded: $m"
     done
@@ -109,8 +118,31 @@ if [ -x /usr/sbin/dropbear ]; then
 
     if [ -z "$IFACE" ]; then
         echo "  no network interface found (no matching NIC driver)"
+        echo "  loaded modules were:"
+        lsmod 2>/dev/null | sed 's/^/    /'
     else
         echo "  interface: $IFACE"
+
+        # An all-zero MAC means the driver bound but never read the hardware:
+        # the PHY did not attach, or the device is not really present. DHCP
+        # cannot work in that state, and the failure is silent otherwise.
+        MAC="$(cat "/sys/class/net/$IFACE/address" 2>/dev/null)"
+        echo "  mac: ${MAC:-unknown}"
+        case "$MAC" in
+            00:00:00:00:00:00|"")
+                echo "  ERROR: $IFACE has no hardware address."
+                echo "         The PHY did not attach. Likely causes:"
+                echo "           - the PHY driver for this NIC is not in the image"
+                echo "           - the NIC is not actually wired/enabled in firmware"
+                echo "         Loaded phy modules:"
+                lsmod 2>/dev/null | grep -E "phy|realtek|micrel|broadcom|marvell" | sed 's/^/           /'
+                echo "         Skipping DHCP: it cannot succeed without a MAC."
+                IFACE=""
+                ;;
+        esac
+    fi
+
+    if [ -n "$IFACE" ]; then
         ip link set "$IFACE" up 2>/dev/null
         # udhcpc obtains a lease and hands it to an event script, which is what
         # actually configures the address/route/resolv.conf. Without -s pointing
