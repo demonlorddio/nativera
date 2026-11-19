@@ -216,11 +216,20 @@ if [ -x /usr/sbin/dropbear ]; then
             done
             iwctl device list 2>/dev/null | sed 's/^/    /'
 
-            if [ -r /boot/wifi.conf ]; then
+            # Credentials file. On the current single-partition layout the ESP
+            # IS the initramfs root, so the file sits at /wifi.conf. /boot is
+            # only correct once Phase 2 mounts the ESP under /boot, so check
+            # both rather than hardcoding one and silently finding nothing.
+            WIFI_CONF=""
+            for c in /wifi.conf /boot/wifi.conf; do
+                [ -r "$c" ] && WIFI_CONF="$c" && break
+            done
+
+            if [ -n "$WIFI_CONF" ]; then
                 # shellcheck disable=SC1091
-                . /boot/wifi.conf
+                . "$WIFI_CONF"
                 if [ -n "${WIFI_SSID:-}" ]; then
-                    echo "  wifi: joining $WIFI_SSID"
+                    echo "  wifi: joining $WIFI_SSID (from $WIFI_CONF)"
                     iwctl --passphrase "${WIFI_PSK:-}" station "$WIFI_IFACE" \
                         connect "$WIFI_SSID" 2>&1 | sed 's/^/    /'
                     # iwd runs its own DHCP; give it a moment.
@@ -234,11 +243,11 @@ if [ -x /usr/sbin/dropbear ]; then
                     echo "  wifi ip: ${WIP:-none}"
                     [ -n "$WIP" ] && IFACE="$WIFI_IFACE"
                 else
-                    echo "  wifi: /boot/wifi.conf has no WIFI_SSID"
+                    echo "  wifi: $WIFI_CONF has no WIFI_SSID"
                 fi
             else
-                echo "  wifi: no /boot/wifi.conf on the ESP"
-                echo "        create one containing WIFI_SSID= and WIFI_PSK="
+                echo "  wifi: no wifi.conf on the ESP"
+                echo "        create /wifi.conf containing WIFI_SSID= and WIFI_PSK="
             fi
         fi
     fi
