@@ -94,6 +94,33 @@ echo
 if [ -x /usr/sbin/dropbear ]; then
     echo "  --- network ---"
 
+    # PCI inventory FIRST. If no interface appears later, this is what says why:
+    # either there is no ethernet controller at all (Wi-Fi only laptop), or there
+    # is one whose vendor:device ID matches no driver in this image.
+    # Uses sysfs, not /proc/bus/pci/devices: that file has no class code and no
+    # driver binding, so it cannot answer the question.
+    echo "  pci network devices:"
+    PCI_FOUND=0
+    for d in /sys/bus/pci/devices/*/; do
+        [ -r "$d/class" ] || continue
+        c="$(cat "$d/class" 2>/dev/null)"
+        case "$c" in
+            0x02*)
+                PCI_FOUND=1
+                v="$(cat "$d/vendor" 2>/dev/null)"
+                dev="$(cat "$d/device" 2>/dev/null)"
+                drv="$(basename "$(readlink -f "$d/driver" 2>/dev/null)" 2>/dev/null)"
+                case "$c" in
+                    0x020000) kind="ethernet" ;;
+                    0x028000) kind="wifi" ;;
+                    *)        kind="net($c)" ;;
+                esac
+                echo "    $kind ${v#0x}:${dev#0x} driver=${drv:-NONE}"
+                ;;
+        esac
+    done
+    [ "$PCI_FOUND" -eq 0 ] && echo "    (none - no PCI network device at all)"
+
     # Load NIC modules. modprobe needs modules.dep, which build.sh generates.
     # PHY drivers FIRST. A MAC driver probes the MDIO bus for a PHY by ID at
     # attach time; if no PHY driver is registered yet the link never comes up
@@ -108,6 +135,17 @@ if [ -x /usr/sbin/dropbear ]; then
         modprobe "$m" 2>/dev/null && echo "  loaded: $m"
     done
 
+    # Wireless drivers. iwlwifi needs its opmode loaded too: iwlwifi alone
+    # registers no netdev, iwlmvm (or iwldvm on very old parts) does the work.
+    # Loading iwlwifi without an opmode is a silent no-op.
+    for m in cfg80211 mac80211 iwlwifi iwlmvm iwldvm; do
+        modprobe "$m" 2>/dev/null && echo "  loaded wifi: $m"
+    done
+    # Realtek stacks, only present when built with WIFI_VENDORS=realtek|all.
+    for m in rtw88_core rtw88_pci rtw88_usb rtw89_core rtw89_pci rtw89_usb; do
+        modprobe "$m" 2>/dev/null && echo "  loaded wifi: $m"
+    done
+
     # Find an interface that is not loopback.
     IFACE=""
     for i in $(ls /sys/class/net 2>/dev/null); do
@@ -117,7 +155,12 @@ if [ -x /usr/sbin/dropbear ]; then
     done
 
     if [ -z "$IFACE" ]; then
-        echo "  no network interface found (no matching NIC driver)"
+        echo "  no network interface found."
+        echo "  Compare the pci list above:"
+        echo "    - an 'ethernet' entry with driver=NONE means the driver for that"
+        echo "      vendor:device is missing from this image. Send the ID."
+        echo "    - only 'wifi' entries means this machine has no wired NIC."
+        echo "    - nothing at all means no PCI network hardware."
         echo "  loaded modules were:"
         lsmod 2>/dev/null | sed 's/^/    /'
     else
@@ -140,6 +183,64 @@ if [ -x /usr/sbin/dropbear ]; then
                 IFACE=""
                 ;;
         esac
+    fi
+
+    # --- wifi (only when built with WIFI=1) ----------------------------------
+    # iwd owns the wireless interface: it does the WPA handshake AND runs its own
+    # DHCP client, so udhcpc must not be pointed at a wifi interface as well.
+    # Credentials come from wifi.conf on the ESP, so changing network is a text
+    # edit on the stick, not a rebuild.
+    WIFI_IFACE=""
+    if [ -x /usr/sbin/iwd ]; then
+        for i in $(ls /sys/class/net 2>/dev/null); do
+            [ "$i" = "lo" ] && continue
+            [ -d "/sys/class/net/$i/wireless" ] || continue
+            WIFI_IFACE="$i"
+            break
+        done
+
+        if [ -z "$WIFI_IFACE" ]; then
+            echo "  wifi: no wireless interface (driver loaded, no card matched)"
+        else
+            echo "  wifi interface: $WIFI_IFACE"
+            mkdir -p /run/iwd /var/lib/iwd
+            /usr/sbin/iwd >/run/iwd.log 2>&1 &
+            sleep 2
+
+            # Wait for iwd to register the adapter.
+            i=0
+            while [ $i -lt 10 ]; do
+                iwctl adapter list 2>/dev/null | grep -q "$WIFI_IFACE" && break
+                sleep 1
+                i=$((i + 1))
+            done
+            iwctl device list 2>/dev/null | sed 's/^/    /'
+
+            if [ -r /boot/wifi.conf ]; then
+                # shellcheck disable=SC1091
+                . /boot/wifi.conf
+                if [ -n "${WIFI_SSID:-}" ]; then
+                    echo "  wifi: joining $WIFI_SSID"
+                    iwctl --passphrase "${WIFI_PSK:-}" station "$WIFI_IFACE" \
+                        connect "$WIFI_SSID" 2>&1 | sed 's/^/    /'
+                    # iwd runs its own DHCP; give it a moment.
+                    i=0
+                    while [ $i -lt 15 ]; do
+                        WIP="$(ip -4 addr show "$WIFI_IFACE" 2>/dev/null | awk '/inet /{print $2; exit}')"
+                        [ -n "$WIP" ] && break
+                        sleep 1
+                        i=$((i + 1))
+                    done
+                    echo "  wifi ip: ${WIP:-none}"
+                    [ -n "$WIP" ] && IFACE="$WIFI_IFACE"
+                else
+                    echo "  wifi: /boot/wifi.conf has no WIFI_SSID"
+                fi
+            else
+                echo "  wifi: no /boot/wifi.conf on the ESP"
+                echo "        create one containing WIFI_SSID= and WIFI_PSK="
+            fi
+        fi
     fi
 
     if [ -n "$IFACE" ]; then

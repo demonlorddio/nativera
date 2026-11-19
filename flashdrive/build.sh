@@ -279,6 +279,175 @@ if [ "${NET:-0}" = "1" ]; then
     echo "    modules: $(find "$MODROOT" -name '*.ko' | wc -l) (.ko, decompressed)"
 fi
 
+# --- 1c. wifi (optional, WIFI=1) ---------------------------------------------
+# Adds the 802.11 stack, the Intel and Realtek PCI/USB wifi drivers, their
+# firmware, and iwd as the supplicant.
+#
+# iwd, not wpa_supplicant: iwd is 998 KB with one dependency (libell, 649 KB).
+# wpa_supplicant is 5.6 MB and pulls libssl + libcrypto + libnl + libdbus +
+# libpcsclite, about 15 MB total. For an initramfs that difference is decisive.
+#
+# Firmware is the real cost, not the drivers: iwlwifi alone is 203 files. Only
+# the vendor trees for the drivers we actually ship are copied.
+if [ "${WIFI:-0}" = "1" ]; then
+    echo "==> wifi: enabled"
+    KVER="$KERNEL_VERSION"
+    MODROOT="$ROOT/lib/modules/$KVER"
+    mkdir -p "$MODROOT"
+
+    MOD_FAIL=0
+    copy_mod() {
+        local rel="$1"
+        local src="/usr/lib/modules/$KVER/$rel"
+        if [ ! -f "$src" ]; then
+            echo "    MISSING MODULE: $rel" >&2
+            MOD_FAIL=1
+            return 0
+        fi
+        mkdir -p "$MODROOT/$(dirname "$rel")"
+        case "$rel" in
+            *.ko.zst) unzstd -q -c "$src" > "$MODROOT/${rel%.zst}" ;;
+            *)        cp "$src" "$MODROOT/$rel" ;;
+        esac
+        awk -v m="$rel" 'index($0, m ":")==1 { sub(/^[^:]*: */,""); print }' \
+            "/usr/lib/modules/$KVER/modules.dep" 2>/dev/null | tr ' ' '\n' | \
+        while read -r dep; do
+            [ -n "$dep" ] || continue
+            [ -f "/usr/lib/modules/$KVER/$dep" ] || continue
+            local dst="$MODROOT/${dep%.zst}"
+            [ -f "$dst" ] && continue
+            mkdir -p "$MODROOT/$(dirname "$dep")"
+            case "$dep" in
+                *.ko.zst) unzstd -q -c "/usr/lib/modules/$KVER/$dep" > "$dst" ;;
+                *)        cp -n "/usr/lib/modules/$KVER/$dep" "$MODROOT/$dep" 2>/dev/null || true ;;
+            esac
+        done
+    }
+
+    # 802.11 core. cfg80211 and mac80211 are pulled in as deps, listed for clarity.
+    copy_mod kernel/net/wireless/cfg80211.ko.zst
+    copy_mod kernel/net/mac80211/mac80211.ko.zst
+    copy_mod kernel/net/rfkill/rfkill.ko.zst
+
+    # Intel: iwlwifi + the two opmodes (mvm for modern, dvm for old).
+    copy_mod kernel/drivers/net/wireless/intel/iwlwifi/iwlwifi.ko.zst
+    copy_mod kernel/drivers/net/wireless/intel/iwlwifi/mvm/iwlmvm.ko.zst
+    copy_mod kernel/drivers/net/wireless/intel/iwlwifi/dvm/iwldvm.ko.zst
+
+    # Realtek: rtw88 (802.11ac) and rtw89 (802.11ax). 77 modules / 14 MB, which
+    # is a lot of initramfs for cards that may not be present. Off by default;
+    # enable with WIFI_VENDORS=realtek or WIFI_VENDORS=all.
+    case ",${WIFI_VENDORS:-intel}," in
+        *,all,*|*,realtek,*)
+            for m in $(find "/usr/lib/modules/$KVER/kernel/drivers/net/wireless/realtek/rtw88" \
+                            "/usr/lib/modules/$KVER/kernel/drivers/net/wireless/realtek/rtw89" \
+                            -name '*.ko.zst' 2>/dev/null); do
+                copy_mod "${m#/usr/lib/modules/$KVER/}"
+            done
+            ;;
+        *)
+            echo "    realtek wifi: skipped (WIFI_VENDORS=${WIFI_VENDORS:-intel})" ;;
+    esac
+
+    if [ "$MOD_FAIL" -ne 0 ]; then
+        echo "WIFI BUILD FAILED: required module(s) missing" >&2
+        exit 1
+    fi
+
+    # --- firmware -------------------------------------------------------------
+    mkdir -p "$ROOT/usr/lib/firmware"
+    # iwlwifi firmware: 203 flat files in /usr/lib/firmware, 97.6 MB total.
+    # The bulk is Wi-Fi 7 blobs (so/bz/Qu/gl/sc families, ~68 MB) for cards no
+    # ordinary laptop has. Copying all of it makes a 116 MB initramfs, which is
+    # absurd for a boot image. Restrict to the generations that actually appear
+    # in laptops: 16.8 MB instead of 97.6 MB.
+    # Set WIFI_FW_ALL=1 to copy every blob if a card is not covered.
+    if [ "${WIFI_FW_ALL:-0}" = "1" ]; then
+        cp /usr/lib/firmware/iwlwifi-*.zst "$ROOT/usr/lib/firmware/" 2>/dev/null || true
+        echo "    iwlwifi firmware: all blobs"
+    else
+        FW_KEEP="1000 2000 3160 3168 5000 6000 6050 7260 7265 8000 8260 8265 9000 9260 9560 ax200 ax201 ax210 ax211 cc-a0 ty-a0 ma-a0"
+        FW_N=0
+        for g in $FW_KEEP; do
+            for f in /usr/lib/firmware/iwlwifi-$g*.zst; do
+                [ -f "$f" ] || continue
+                cp "$f" "$ROOT/usr/lib/firmware/" 2>/dev/null && FW_N=$((FW_N + 1))
+            done
+        done
+        echo "    iwlwifi firmware: $FW_N common blobs (WIFI_FW_ALL=1 for all)"
+    fi
+
+    # Regulatory database. cfg80211 loads it at init to apply per-country
+    # channel/power limits. Without it you get
+    #   cfg80211: failed to load regulatory.db
+    # and the world-domain (00) rules apply, which disables channels the AP may
+    # be using - a real cause of "iwd sees the network but cannot join it".
+    for rf in regulatory.db regulatory.db.p7s; do
+        [ -f "/usr/lib/firmware/$rf" ] && \
+            cp "/usr/lib/firmware/$rf" "$ROOT/usr/lib/firmware/" 2>/dev/null || true
+    done
+    for fw in rtw88 rtw89; do
+        case ",${WIFI_VENDORS:-intel}," in
+            *,all,*|*,realtek,*)
+                [ -d "/usr/lib/firmware/$fw" ] && \
+                    cp -r "/usr/lib/firmware/$fw" "$ROOT/usr/lib/firmware/" 2>/dev/null || true ;;
+        esac
+    done
+
+    # --- iwd ------------------------------------------------------------------
+    if [ -x /usr/lib/iwd/iwd ]; then
+        install -m 755 /usr/lib/iwd/iwd "$ROOT/usr/sbin/iwd"
+        cp -L /usr/lib/libell.so.0 "$ROOT/usr/lib/libell.so.0"
+        # libgcc_s: iwd links against it and the base rootfs does not carry it.
+        # Without it iwd dies at startup with
+        #   error while loading shared libraries: libgcc_s.so.1
+        # which is invisible unless you actually run the binary - the file being
+        # present in the image proves nothing.
+        for lib in libgcc_s.so.1 libm.so.6; do
+            [ -f "/usr/lib/$lib" ] && cp -L "/usr/lib/$lib" "$ROOT/usr/lib/$lib" 2>/dev/null || true
+        done
+        # iwd reads its config from /etc/iwd; a minimal one is enough.
+        mkdir -p "$ROOT/etc/iwd"
+        printf '[General]\nEnableNetworkConfiguration=true\n' > "$ROOT/etc/iwd/main.conf"
+    else
+        echo "    WARNING: /usr/lib/iwd/iwd missing, no wifi supplicant" >&2
+    fi
+
+    # iwctl is the CLI front end; useful for debugging from the console.
+    # It needs libreadline + libncursesw on top of iwd's own deps.
+    if [ -x /usr/bin/iwctl ]; then
+        install -m 755 /usr/bin/iwctl "$ROOT/usr/bin/iwctl"
+        for lib in libreadline.so.8 libncursesw.so.6 libtinfo.so.6; do
+            [ -f "/usr/lib/$lib" ] && cp -L "/usr/lib/$lib" "$ROOT/usr/lib/$lib" 2>/dev/null || true
+        done
+    fi
+
+    # Verify every shared library iwd needs is actually in the rootfs.
+    # A missing .so does not fail the build, it fails the boot - and only
+    # when the binary is executed, which may be long after the image looked
+    # fine. Check every binary we ship, not just iwd.
+    IWD_MISSING=""
+    for bin in /usr/lib/iwd/iwd /usr/bin/iwctl; do
+        [ -x "$bin" ] || continue
+        for so in $(ldd "$bin" 2>/dev/null | awk '/=> \//{print $3}'); do
+            base="$(basename "$so")"
+            case "$base" in
+                libc.so.6|ld-linux-x86-64.so.2) continue ;;  # in base rootfs
+            esac
+            [ -f "$ROOT/usr/lib/$base" ] || [ -f "$ROOT/usr/lib64/$base" ] || \
+                IWD_MISSING="$IWD_MISSING $base"
+        done
+    done
+    if [ -n "$IWD_MISSING" ]; then
+        echo "    WIFI BUILD FAILED: missing shared libs:$IWD_MISSING" >&2
+        exit 1
+    fi
+    echo "    iwd installed (all shared libs present)"
+
+    echo "    wifi modules: $(find "$MODROOT" -name '*.ko' | wc -l) total"
+    echo "    firmware: $(du -sh "$ROOT/usr/lib/firmware" 2>/dev/null | cut -f1)"
+fi
+
 # --- 2. package: newc cpio + gzip, root-owned, symlinks preserved -----------
 ( cd "$ROOT" && \
   find . -print0 | cpio -o -0 -R 0:0 --format=newc 2>/dev/null | \
