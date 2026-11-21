@@ -334,20 +334,35 @@ if [ "${WIFI:-0}" = "1" ]; then
     copy_mod kernel/drivers/net/wireless/intel/iwlwifi/mvm/iwlmvm.ko.zst
     copy_mod kernel/drivers/net/wireless/intel/iwlwifi/dvm/iwldvm.ko.zst
 
-    # Realtek: rtw88 (802.11ac) and rtw89 (802.11ax). 77 modules / 14 MB, which
-    # is a lot of initramfs for cards that may not be present. Off by default;
-    # enable with WIFI_VENDORS=realtek or WIFI_VENDORS=all.
-    case ",${WIFI_VENDORS:-intel}," in
-        *,all,*|*,realtek,*)
-            for m in $(find "/usr/lib/modules/$KVER/kernel/drivers/net/wireless/realtek/rtw88" \
-                            "/usr/lib/modules/$KVER/kernel/drivers/net/wireless/realtek/rtw89" \
-                            -name '*.ko.zst' 2>/dev/null); do
-                copy_mod "${m#/usr/lib/modules/$KVER/}"
-            done
-            ;;
-        *)
-            echo "    realtek wifi: skipped (WIFI_VENDORS=${WIFI_VENDORS:-intel})" ;;
-    esac
+    # Realtek: rtw88 (802.11ac) and rtw89 (802.11ax).
+    # MediaTek: mt76 family, which covers MT7921/MT7922/MT7925 - the cards in
+    # most AMD laptops (HP Envy, Lenovo IdeaPad, ASUS Vivobook). An AMD laptop
+    # essentially never has Intel wifi, so shipping only iwlwifi was wrong for
+    # that whole class of machine.
+    #
+    # Default is now "all": the combined cost is ~6 MB of modules and ~17 MB of
+    # firmware, which is cheap next to another reboot cycle spent guessing. A
+    # narrower build is still available: WIFI_VENDORS=intel|realtek|mediatek.
+    for vendor in $(echo "${WIFI_VENDORS:-all}" | tr ',' ' '); do
+        case "$vendor" in
+            all|realtek)
+                for m in $(find "/usr/lib/modules/$KVER/kernel/drivers/net/wireless/realtek/rtw88" \
+                                "/usr/lib/modules/$KVER/kernel/drivers/net/wireless/realtek/rtw89" \
+                                -name '*.ko.zst' 2>/dev/null); do
+                    copy_mod "${m#/usr/lib/modules/$KVER/}"
+                done
+                ;;
+        esac
+        case "$vendor" in
+            all|mediatek)
+                for m in $(find "/usr/lib/modules/$KVER/kernel/drivers/net/wireless/mediatek" \
+                                -name '*.ko.zst' 2>/dev/null); do
+                    copy_mod "${m#/usr/lib/modules/$KVER/}"
+                done
+                ;;
+        esac
+    done
+    echo "    wifi vendors: ${WIFI_VENDORS:-all}"
 
     if [ "$MOD_FAIL" -ne 0 ]; then
         echo "WIFI BUILD FAILED: required module(s) missing" >&2
@@ -429,12 +444,29 @@ if [ "${WIFI:-0}" = "1" ]; then
             cp "/usr/lib/firmware/$rf" "$ROOT/usr/lib/firmware/" 2>/dev/null || true
     done
     for fw in rtw88 rtw89; do
-        case ",${WIFI_VENDORS:-intel}," in
+        case ",${WIFI_VENDORS:-all}," in
             *,all,*|*,realtek,*)
                 [ -d "/usr/lib/firmware/$fw" ] && \
                     cp -r "/usr/lib/firmware/$fw" "$ROOT/usr/lib/firmware/" 2>/dev/null || true ;;
         esac
     done
+
+    # MediaTek mt76 firmware. The whole /usr/lib/firmware/mediatek tree is 38 MB
+    # and most of it is Bluetooth and SoC blobs. Only the WIFI_* and mt79*/mt76*
+    # files are needed for the wifi driver.
+    case ",${WIFI_VENDORS:-all}," in
+        *,all,*|*,mediatek,*)
+            if [ -d /usr/lib/firmware/mediatek ]; then
+                mkdir -p "$ROOT/usr/lib/firmware/mediatek"
+                for f in /usr/lib/firmware/mediatek/*.zst; do
+                    [ -f "$f" ] || continue
+                    case "$(basename "$f")" in
+                        WIFI_*|mt76*|mt79*) cp "$f" "$ROOT/usr/lib/firmware/mediatek/" 2>/dev/null || true ;;
+                    esac
+                done
+                echo "    mediatek firmware: $(ls "$ROOT/usr/lib/firmware/mediatek" | wc -l) files"
+            fi ;;
+    esac
 
     # --- iwd ------------------------------------------------------------------
     if [ -x /usr/lib/iwd/iwd ]; then
