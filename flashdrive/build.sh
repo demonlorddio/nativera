@@ -356,17 +356,59 @@ if [ "${WIFI:-0}" = "1" ]; then
 
     # --- firmware -------------------------------------------------------------
     mkdir -p "$ROOT/usr/lib/firmware"
-    # iwlwifi firmware: 203 flat files in /usr/lib/firmware, 97.6 MB total.
-    # The bulk is Wi-Fi 7 blobs (so/bz/Qu/gl/sc families, ~68 MB) for cards no
-    # ordinary laptop has. Copying all of it makes a 116 MB initramfs, which is
-    # absurd for a boot image. Restrict to the generations that actually appear
-    # in laptops: 16.8 MB instead of 97.6 MB.
-    # Set WIFI_FW_ALL=1 to copy every blob if a card is not covered.
-    if [ "${WIFI_FW_ALL:-0}" = "1" ]; then
+    # iwlwifi firmware: 203 flat files, 97.6 MB total. Two ways to select:
+    #
+    # DEFAULT (WIFI_FW=modinfo): copy exactly what this kernel's iwlwifi module
+    # declares as its firmware. `modinfo -F firmware iwlwifi` lists every file
+    # the driver can ask for, so this covers EVERY card the driver supports -
+    # including the AX211 (family "so") that the old hand-written list missed -
+    # at 14.5 MB instead of 97.6 MB. This is the correct default: it is derived
+    # from the driver rather than guessed from marketing names.
+    #
+    # WIFI_FW=all: copy every blob (97.6 MB, 116 MB initramfs). Last resort.
+    # WIFI_FW=families: use the FW_KEEP family list below.
+    #
+    # History: the earlier list used model names ("ax211", "ax200") which match
+    # no iwlwifi firmware file at all - files are named by silicon family. An
+    # AX211 therefore got no firmware, iwlwifi loaded, found no card to bind, and
+    # the boot reported "wifi: no wireless interface". Deriving the list from
+    # modinfo makes that class of mistake impossible.
+    FW_MODE="${WIFI_FW:-modinfo}"
+    if [ "$FW_MODE" = "all" ]; then
         cp /usr/lib/firmware/iwlwifi-*.zst "$ROOT/usr/lib/firmware/" 2>/dev/null || true
         echo "    iwlwifi firmware: all blobs"
+    elif [ "$FW_MODE" = "modinfo" ] && command -v modinfo >/dev/null 2>&1; then
+        FW_N=0
+        FW_MISS=0
+        for name in $(modinfo -F firmware iwlwifi 2>/dev/null | sort -u); do
+            [ -n "$name" ] || continue
+            # Host firmware is .zst-compressed and often a symlink into
+            # intel/iwlwifi/. Copy the target, keeping the flat name the driver
+            # asks for (firmware loader searches /usr/lib/firmware directly).
+            for cand in "/usr/lib/firmware/$name.zst" "/usr/lib/firmware/$name"; do
+                if [ -e "$cand" ]; then
+                    cp -L "$cand" "$ROOT/usr/lib/firmware/$(basename "$cand")" 2>/dev/null \
+                        && FW_N=$((FW_N + 1))
+                    break
+                fi
+            done
+        done
+        echo "    iwlwifi firmware: $FW_N blobs from modinfo (WIFI_FW=all for everything)"
     else
-        FW_KEEP="1000 2000 3160 3168 5000 6000 6050 7260 7265 8000 8260 8265 9000 9260 9560 ax200 ax201 ax210 ax211 cc-a0 ty-a0 ma-a0"
+        # Families, not model names. iwlwifi firmware is named by silicon family
+        # (iwlwifi-<family>-<stepping>-<variant>-<ver>.ucode), NOT by marketing
+        # name: an AX211 is family "so", an AX201 is "Qu", an AX210 is "ty".
+        # The previous list used model names like "ax211" and "ax200", which
+        # match no file at all - so those cards got no firmware and iwlwifi
+        # loaded, found no card to bind, and reported "no wireless interface".
+        #
+        # so/gl = AX211/AX411/AX1675 class (CNVi, most 2021+ Intel laptops)
+        # ty    = AX210/AX211 desktop parts
+        # cc    = AX200/AX201
+        # Qu    = AX201/AX211 CNVi variants
+        # ma    = AX211/AX411 newer CNVi
+        # 9000/9260/9560/8265/8260/7265/3168/... = older laptop parts
+        FW_KEEP="1000 2000 3160 3168 5000 6000 6050 7260 7265 8000 8260 8265 9000 9260 9560 so gl ty cc ma"
         FW_N=0
         for g in $FW_KEEP; do
             for f in /usr/lib/firmware/iwlwifi-$g*.zst; do
@@ -374,7 +416,7 @@ if [ "${WIFI:-0}" = "1" ]; then
                 cp "$f" "$ROOT/usr/lib/firmware/" 2>/dev/null && FW_N=$((FW_N + 1))
             done
         done
-        echo "    iwlwifi firmware: $FW_N common blobs (WIFI_FW_ALL=1 for all)"
+        echo "    iwlwifi firmware: $FW_N blobs from family list"
     fi
 
     # Regulatory database. cfg80211 loads it at init to apply per-country
