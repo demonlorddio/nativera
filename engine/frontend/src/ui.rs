@@ -126,10 +126,21 @@ pub fn run_frame(
             .render(title)
             .blended(constants::SELECTED_COLOR)
             .map_err(|e| e.to_string())?;
+        // The destination rect MUST carry the surface's real size. A 0x0 dest
+        // makes SDL_RenderCopy scale the texture to nothing, so the text is
+        // drawn invisibly - which is exactly why the bands appeared and the
+        // text did not. title_rect() keeps the C anchor (40,25) but the size
+        // has to come from the rendered surface.
+        let tw = surface.width() as u32;
+        let th = surface.height() as u32;
         let texture = texture_creator
             .create_texture_from_surface(&surface)
             .map_err(|e| e.to_string())?;
-        canvas.copy(&texture, None, Some(title_rect()))?;
+        canvas.copy(
+            &texture,
+            None,
+            Some(sdl2::rect::Rect::new(constants::TITLE_X, constants::TITLE_Y, tw, th)),
+        )?;
 
         for (i, game) in games.iter().enumerate() {
             if i == selected {
@@ -145,13 +156,15 @@ pub fn run_frame(
                 .render(&game.name)
                 .blended(color)
                 .map_err(|e| e.to_string())?;
+            let gw = surface.width() as u32;
+            let gh = surface.height() as u32;
             let texture = texture_creator
                 .create_texture_from_surface(&surface)
                 .map_err(|e| e.to_string())?;
             canvas.copy(
                 &texture,
                 None,
-                Some(sdl2::rect::Rect::new(constants::TEXT_X, row_y(i), 0, 0)),
+                Some(sdl2::rect::Rect::new(constants::TEXT_X, row_y(i), gw, gh)),
             )?;
         }
     }

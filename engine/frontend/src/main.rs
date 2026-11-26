@@ -44,27 +44,35 @@ fn main() {
     .find_map(|p| ttf.load_font(p, 24).ok());
 
     let mut pump = sdl.event_pump().expect("event pump");
-    for event in pump.poll_iter() {
-        match event {
-            sdl2::event::Event::Quit { .. } => break,
-            sdl2::event::Event::KeyDown { keycode, .. } => {
-                if let Some(action) = ui::handle_key(keycode, &mut selected, games.len()) {
-                    match action {
-                        Action::MoveUp | Action::MoveDown => {}
-                        Action::Launch => {
-                            let entry = &games[selected];
-                            if !entry.path.is_empty() {
-                                match launch_game(Path::new("./run.sh"), &entry.path) {
-                                    Ok(code) => eprintln!("[fe] exit {code}"),
-                                    Err(e) => eprint!("{}", ui::report_launch(&entry.path, &e)),
+
+    // The event pump must be drained inside an outer loop. `for event in
+    // pump.poll_iter()` alone iterates only the events queued at that instant
+    // and then falls through - main returns, the window closes, and the
+    // front-end exits after a single frame. That is the whole reason the binary
+    // "ran" and vanished instead of showing a menu.
+    'running: loop {
+        for event in pump.poll_iter() {
+            match event {
+                sdl2::event::Event::Quit { .. } => break 'running,
+                sdl2::event::Event::KeyDown { keycode, .. } => {
+                    if let Some(action) = ui::handle_key(keycode, &mut selected, games.len()) {
+                        match action {
+                            Action::MoveUp | Action::MoveDown => {}
+                            Action::Launch => {
+                                let entry = &games[selected];
+                                if !entry.path.is_empty() {
+                                    match launch_game(Path::new("./run.sh"), &entry.path) {
+                                        Ok(code) => eprintln!("[fe] exit {code}"),
+                                        Err(e) => eprint!("{}", ui::report_launch(&entry.path, &e)),
+                                    }
                                 }
                             }
+                            Action::Quit => break 'running,
                         }
-                        Action::Quit => break,
                     }
                 }
+                _ => {}
             }
-            _ => {}
         }
 
         ui::run_frame(
