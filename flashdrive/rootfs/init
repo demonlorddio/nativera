@@ -331,6 +331,15 @@ if [ -x /usr/bin/nativera-fe ]; then
         echo "  starting nativera-fe..."
         echo
         cd / || true
+        # Force the software rasteriser. kms_swrast renders through KMS with no
+        # GPU driver behind it, so a menu comes up on ANY machine - including one
+        # whose GPU has no driver in this image, and including VirtualBox, whose
+        # vmwgfx support the kernel rejects as an "unsupported hypervisor".
+        # A launcher menu does not need hardware acceleration; it needs pixels.
+        # GALLIUM_DRIVER=llvmpipe picks Mesa's software pipe explicitly.
+        export GALLIUM_DRIVER=llvmpipe
+        export LIBGL_ALWAYS_SOFTWARE=1
+        export MESA_LOADER_DRIVER_OVERRIDE=kms_swrast
         setsid cttyhack /usr/bin/nativera-fe /roms
         RC=$?
         echo
