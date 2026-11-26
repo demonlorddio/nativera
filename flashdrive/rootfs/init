@@ -301,6 +301,51 @@ if [ -x /usr/sbin/dropbear ]; then
     echo
 fi
 
+# --- graphical session (only present when built with GUI=1) -------------------
+# Load the GPU driver, then hand the console to the front-end. SDL2's KMSDRM
+# backend takes over the framebuffer directly - there is no X, no Wayland, no
+# compositor. If anything fails we fall through to the shell below, so a broken
+# GPU path degrades to a usable console instead of a black screen.
+GUI_STARTED=0
+if [ -x /usr/bin/nativera-fe ]; then
+    echo "  --- graphics ---"
+    # amdgpu first, i915 second; whichever matches the hardware binds.
+    for m in amdgpu i915 vmwgfx; do
+        modprobe "$m" 2>/dev/null && echo "  loaded gpu: $m"
+    done
+
+    # Wait for a DRM device node. KMSDRM needs /dev/dri/card0.
+    i=0
+    while [ $i -lt 10 ]; do
+        [ -e /dev/dri/card0 ] && break
+        sleep 1
+        i=$((i + 1))
+    done
+
+    if [ -e /dev/dri/card0 ]; then
+        echo "  drm: /dev/dri/card0 present"
+        ls /dev/dri 2>/dev/null | sed 's/^/    /'
+
+        # The front-end needs a controlling tty for keyboard input, same reason
+        # the shell does: setsid + cttyhack, then exec the binary.
+        echo "  starting nativera-fe..."
+        echo
+        cd / || true
+        setsid cttyhack /usr/bin/nativera-fe /roms
+        RC=$?
+        echo
+        echo "  nativera-fe exited ($RC)"
+        GUI_STARTED=1
+    else
+        echo "  drm: no /dev/dri/card0 - GPU did not initialise"
+        echo "       falling back to the console shell"
+        echo "       loaded gpu modules:"
+        lsmod 2>/dev/null | grep -E "amdgpu|i915|drm" | sed 's/^/         /'
+    fi
+    echo "  -------------------"
+    echo
+fi
+
 # Drop into an interactive shell on the console.
 #
 # PID 1 is already a session leader with NO controlling tty, so `exec cttyhack

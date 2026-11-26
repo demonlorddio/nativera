@@ -91,7 +91,7 @@ VBoxManage modifyvm "$VM" \
     --memory 1024 --cpus 2 --vram 16 \
     --firmware efi \
     --boot1 disk --boot2 none --boot3 none --boot4 none \
-    --graphicscontroller vmsvga \
+    --graphicscontroller "${GFX:-vmsvga}" \
     $UART_ARGS \
     --audio none --usb off --nic1 "${NIC_MODE:-none}" >/dev/null
 

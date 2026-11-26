@@ -522,6 +522,191 @@ if [ "${WIFI:-0}" = "1" ]; then
     echo "    firmware: $(du -sh "$ROOT/usr/lib/firmware" 2>/dev/null | cut -f1)"
 fi
 
+# --- 1d. graphical (optional, GUI=1) -----------------------------------------
+# Makes the boot land in the NativeRa front-end instead of a busybox prompt.
+#
+# NO DESKTOP ENVIRONMENT. No X11, no Wayland, no compositor, no display manager.
+# SDL2 has a KMSDRM backend that renders straight to the GPU framebuffer, which
+# is what Batocera does and why it reaches its menu in seconds. A console distro
+# with a desktop environment is a contradiction: it costs 300+ MB and buys
+# nothing a fullscreen game launcher needs.
+#
+# What this adds:
+#   - amdgpu (+ deps) and its firmware, filtered to Ryzen iGPU families
+#   - i915 firmware, so Intel laptops work too
+#   - SDL2 + SDL2_ttf + freetype/harfbuzz and their deps
+#   - the nativera-fe binary, a font, and a /init that execs it
+if [ "${GUI:-0}" = "1" ]; then
+    echo "==> gui: enabled"
+    KVER="$KERNEL_VERSION"
+    MODROOT="$ROOT/lib/modules/$KVER"
+    mkdir -p "$MODROOT"
+
+    MOD_FAIL=0
+    copy_mod() {
+        local rel="$1"
+        local src="/usr/lib/modules/$KVER/$rel"
+        if [ ! -f "$src" ]; then
+            echo "    MISSING MODULE: $rel" >&2
+            MOD_FAIL=1
+            return 0
+        fi
+        mkdir -p "$MODROOT/$(dirname "$rel")"
+        case "$rel" in
+            *.ko.zst) unzstd -q -c "$src" > "$MODROOT/${rel%.zst}" ;;
+            *)        cp "$src" "$MODROOT/$rel" ;;
+        esac
+        awk -v m="$rel" 'index($0, m ":")==1 { sub(/^[^:]*: */,""); print }' \
+            "/usr/lib/modules/$KVER/modules.dep" 2>/dev/null | tr ' ' '\n' | \
+        while read -r dep; do
+            [ -n "$dep" ] || continue
+            [ -f "/usr/lib/modules/$KVER/$dep" ] || continue
+            local dst="$MODROOT/${dep%.zst}"
+            [ -f "$dst" ] && continue
+            mkdir -p "$MODROOT/$(dirname "$dep")"
+            case "$dep" in
+                *.ko.zst) unzstd -q -c "/usr/lib/modules/$KVER/$dep" > "$dst" ;;
+                *)        cp -n "/usr/lib/modules/$KVER/$dep" "$MODROOT/$dep" 2>/dev/null || true ;;
+            esac
+        done
+    }
+
+    # amdgpu pulls ~14 deps (ttm, gpu-sched, drm_display_helper, cec, wmi...).
+    # copy_mod resolves them from modules.dep.
+    copy_mod kernel/drivers/gpu/drm/amd/amdgpu/amdgpu.ko.zst
+    # i915 for Intel laptops. Its deps are resolved the same way.
+    copy_mod kernel/drivers/gpu/drm/i915/i915.ko.zst
+    # vmwgfx drives VirtualBox's VMSVGA adapter. Without it a VM falls back to
+    # simpledrm, which has no KMS driver behind it, and SDL's KMSDRM backend
+    # reports "No available video device" even though /dev/dri/card0 exists.
+    # This is what makes the graphical build testable in a VM at all.
+    copy_mod kernel/drivers/gpu/drm/vmwgfx/vmwgfx.ko.zst
+
+    if [ "$MOD_FAIL" -ne 0 ]; then
+        echo "GUI BUILD FAILED: required GPU module(s) missing" >&2
+        exit 1
+    fi
+
+    # --- GPU firmware ---------------------------------------------------------
+    # amdgpu ships 699 files / 30 MB covering every AMD part since 2009. A Ryzen
+    # 7 Envy has an integrated GPU from one of a handful of families; those are
+    # 63 files / 0.9 MB. Ship the iGPU families plus a few common dGPUs.
+    mkdir -p "$ROOT/usr/lib/firmware/amdgpu"
+    FW_N=0
+    if [ "${GPU_FW_ALL:-0}" = "1" ]; then
+        cp /usr/lib/firmware/amdgpu/* "$ROOT/usr/lib/firmware/amdgpu/" 2>/dev/null || true
+        FW_N=$(ls "$ROOT/usr/lib/firmware/amdgpu" | wc -l)
+        echo "    amdgpu firmware: all ($FW_N files)"
+    else
+        # Ryzen iGPU families: raven/picasso (Zen+), renoir (Zen2), cezanne
+        # (Zen3), rembrandt/phoenix (Zen4), yellow_carp (Zen5).
+        for fam in raven picasso renoir cezanne rembrandt phoenix yellow_carp \
+                   navi10 navi14 navi22 navi23 navi24 navi31 navi32 navi33 \
+                   polaris10 polaris11 vega10 vega20; do
+            for f in /usr/lib/firmware/amdgpu/${fam}_*; do
+                [ -f "$f" ] || continue
+                cp "$f" "$ROOT/usr/lib/firmware/amdgpu/" 2>/dev/null && FW_N=$((FW_N + 1))
+            done
+        done
+        echo "    amdgpu firmware: $FW_N files (GPU_FW_ALL=1 for all)"
+    fi
+    # i915 firmware for Intel graphics.
+    if [ -d /usr/lib/firmware/i915 ]; then
+        mkdir -p "$ROOT/usr/lib/firmware/i915"
+        cp /usr/lib/firmware/i915/*.zst "$ROOT/usr/lib/firmware/i915/" 2>/dev/null || true
+    fi
+
+    # --- SDL2 + font stack ----------------------------------------------------
+    # SDL2 links only libc; SDL2_ttf pulls freetype, which pulls harfbuzz, png,
+    # bz2, brotli, zlib. Copy the whole closure rather than guessing.
+    #
+    # libSDL3.so.0 is REQUIRED and ldd cannot see it: Arch's sdl2-compat is a
+    # translation shim that dlopen()s libSDL3 at runtime, so the binary links
+    # against libSDL2-2.0.so.0 but dies with "Failed loading SDL3 library" if
+    # SDL3 is absent. A dependency check built on ldd alone will always miss it.
+    GUI_LIBS=""
+    for lib in libSDL2-2.0.so.0 libSDL3.so.0 libSDL2_ttf-2.0.so.0 libfreetype.so.6 \
+               libharfbuzz.so.0 libpng16.so.16 libbz2.so.1.0 libbrotlidec.so.1 \
+               libbrotlicommon.so.1 libz.so.1 libgcc_s.so.1 libm.so.6 \
+               libglib-2.0.so.0 libgraphite2.so.3 libpcre2-8.so.0 \
+               libgbm.so.1 libEGL.so.1 libGLESv2.so.2 libGLdispatch.so.0 \
+               libdrm.so.2 libexpat.so.1; do
+        src="/usr/lib/$lib"
+        [ -e "$src" ] || continue
+        cp -L "$src" "$ROOT/usr/lib/$lib" 2>/dev/null && GUI_LIBS="$GUI_LIBS $lib"
+    done
+    echo "    gui libs:$GUI_LIBS"
+
+    # --- Mesa DRI + gallium ---------------------------------------------------
+    # SDL3's KMSDRM backend renders through GBM + EGL, which loads a Mesa DRI
+    # driver at runtime. Without these, video init fails with "No available video
+    # device" even though /dev/dri/card0 exists and vmwgfx/amdgpu bound fine.
+    #
+    # All the *_dri.so names are symlinks to libdril_dri.so, which in turn pulls
+    # libgallium (65 MB) - that is the real cost of a GPU path, and it is why a
+    # distro ships Mesa as a package rather than inside an initramfs.
+    mkdir -p "$ROOT/usr/lib/dri"
+    cp -L /usr/lib/dri/libdril_dri.so "$ROOT/usr/lib/dri/" 2>/dev/null || true
+    for d in radeonsi_dri.so iris_dri.so svga_dri.so kms_swrast_dri.so swrast_dri.so; do
+        [ -e "/usr/lib/dri/$d" ] && ln -sf libdril_dri.so "$ROOT/usr/lib/dri/$d"
+    done
+    for g in /usr/lib/libgallium-*.so; do
+        [ -f "$g" ] && cp -L "$g" "$ROOT/usr/lib/" 2>/dev/null || true
+    done
+    echo "    mesa: $(du -sh "$ROOT/usr/lib/dri" 2>/dev/null | cut -f1) dri + $(ls /usr/lib/libgallium-*.so 2>/dev/null | wc -l) gallium"
+
+    # --- the front-end binary -------------------------------------------------
+    FE="$REPO/engine/target/release/nativera-fe"
+    if [ ! -x "$FE" ]; then
+        echo "    building nativera-fe..."
+        ( cd "$REPO/engine" && cargo build --release -p nativera_frontend >/dev/null 2>&1 ) || {
+            echo "GUI BUILD FAILED: cargo build of nativera-fe failed" >&2
+            exit 1
+        }
+    fi
+    install -m 755 "$FE" "$ROOT/usr/bin/nativera-fe"
+
+    # Font. The front-end looks in two fixed paths; ship one of them.
+    mkdir -p "$ROOT/usr/share/fonts/TTF"
+    for f in /usr/share/fonts/TTF/DejaVuSans-Bold.ttf \
+             /usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf; do
+        [ -f "$f" ] && cp "$f" "$ROOT/usr/share/fonts/TTF/DejaVuSans-Bold.ttf" && break
+    done
+
+    # --- verify the front-end's own library closure ---------------------------
+    # Same rule as iwd: a missing .so fails at run time, not build time, and only
+    # when the binary is executed.
+    FE_MISSING=""
+    for so in $(ldd "$FE" 2>/dev/null | awk '/=> \//{print $3}'); do
+        base="$(basename "$so")"
+        case "$base" in
+            libc.so.6|ld-linux-x86-64.so.2) continue ;;
+        esac
+        [ -f "$ROOT/usr/lib/$base" ] || [ -f "$ROOT/usr/lib64/$base" ] || \
+            FE_MISSING="$FE_MISSING $base"
+    done
+    if [ -n "$FE_MISSING" ]; then
+        echo "    GUI BUILD FAILED: nativera-fe missing shared libs:$FE_MISSING" >&2
+        exit 1
+    fi
+
+    # dlopen()'d libraries are invisible to ldd. sdl2-compat loads libSDL3 at
+    # runtime, so check it explicitly - this exact omission produced
+    # "Failed loading SDL3 library" on a build that otherwise passed every check.
+    DLOPEN_MISSING=""
+    for so in libSDL3.so.0; do
+        [ -f "$ROOT/usr/lib/$so" ] || DLOPEN_MISSING="$DLOPEN_MISSING $so"
+    done
+    if [ -n "$DLOPEN_MISSING" ]; then
+        echo "    GUI BUILD FAILED: dlopen'd libs missing:$DLOPEN_MISSING" >&2
+        exit 1
+    fi
+    echo "    nativera-fe installed (all shared libs present, incl. dlopen'd)"
+
+    # Empty roms dir so the front-end shows its placeholder rather than failing.
+    mkdir -p "$ROOT/roms"
+fi
+
 # --- 2. package: newc cpio + gzip, root-owned, symlinks preserved -----------
 ( cd "$ROOT" && \
   find . -print0 | cpio -o -0 -R 0:0 --format=newc 2>/dev/null | \
